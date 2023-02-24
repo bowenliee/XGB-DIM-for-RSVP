@@ -32,6 +32,7 @@ gstf_weight: the weight of the GSTF, example: 0.3
 validation_flag: whether to use the validation set
 validation_step: the step of the validation, example: 100, means that the validation is performed every 100 sub models
 crossentropy_flag: whether to calculate the cross entropy loss
+random_downsampling_flag: whether to use the random downsampling for the negative samples
 
 '''
 class XGBDIM():
@@ -40,7 +41,7 @@ class XGBDIM():
                  model_path,
                  n_cutpoint, win_len, chan_xlen, chan_ylen, step_x, step_y,
                  eta, alpha, Nb, N_iteration, C1, C0, max_N_model, gstf_weight,
-                 validation_flag, validation_step, crossentropy_flag):
+                 validation_flag, validation_step, crossentropy_flag, random_downsampling_flag):
 
         self.data_path = data_path
         self.model_path = model_path
@@ -68,7 +69,7 @@ class XGBDIM():
         self.validation_flag = validation_flag
         self.validation_step = validation_step
         self.crossentropy_flag = crossentropy_flag
-
+        self.random_downsampling_flag = random_downsampling_flag
         temp = np.array(range(1, 55))
         self.channel_loc = np.array([temp[0:9], temp[9:18], temp[18:27], temp[27:36], temp[36:45], temp[45:54]])
 
@@ -152,13 +153,13 @@ class XGBDIM():
                     cup = np.squeeze(
                         X1[self.channel[self.channel_conv[idx_chan, :] - 1] - 1,
                         self.window_st[idx_win] - 1:self.window_ov[idx_win],
-                        k])  # 注意索引要减1
+                        k])
                     Tset[k, :, idx_conv] = cup.T.flatten()
                 for k in range(K2):
                     cup = np.squeeze(
                         X2[self.channel[self.channel_conv[idx_chan, :] - 1] - 1,
                         self.window_st[idx_win] - 1:self.window_ov[idx_win],
-                        k])  # 注意索引要减1
+                        k])
                     NTset[k, :, idx_conv] = cup.T.flatten()
 
         return Tset, NTset
@@ -170,7 +171,7 @@ class XGBDIM():
             X1[:, :, k] = X1[:, :, k] - np.mean(X1[:, :, k], axis=1)[:, np.newaxis]
         for k in range(K2):
             X2[:, :, k] = X2[:, :, k] - np.mean(X2[:, :, k], axis=1)[:, np.newaxis]
-
+        print('EEG processed !')
         return X1, X2
 
     def get_data(self, dataset):
@@ -179,7 +180,7 @@ class XGBDIM():
         Tset, NTset = self.get_3D_cuboids(X1, X2, K1, K2)
         Tset_global = X1.copy()
         NTset_global = X2.copy()
-
+        print('EEG reshaped !')
         return Tset, NTset, Tset_global, NTset_global, K1, K2
 
     def get_order_step(self):
@@ -564,14 +565,49 @@ class XGBDIM():
 
     def test(self, testset):
         self.load_model()
+        print('Model of Subject %d is loaded' % self.sub_idx)
         self.get_3Dconv()
         Tset_test, NTset_test, Tset_test_global, NTset_test_global, K1t, K2t = \
             self.get_data(testset)
 
         X_test = np.concatenate((Tset_test, NTset_test), axis=0)
-        self.X_test_global = np.concatenate((Tset_test_global, NTset_test_global), axis=2)
-        self.label_test = np.concatenate((np.ones((K1t, 1)), np.zeros((K2t, 1))), axis=0)
-        self.X_test = X_test[:, :, self.I_sort[:self.N_model]]
+        X_test_global = np.concatenate((Tset_test_global, NTset_test_global), axis=2)
+        label_test = np.concatenate((np.ones((K1t, 1)), np.zeros((K2t, 1))), axis=0)
+        X_test = X_test[:, :, self.I_sort[:self.N_model]]
+        print('Samples obtained!')
+        Ns = np.shape(X_test_global)[2]
+
+        X_global_BN = self.batchnormalize_global(X_test_global, self.Gamma_global, self.Beta_global,
+                                                 self.M_global, self.Sigma_global)
+        X_minibatch_BN = np.zeros((Ns, self.T_local, self.N_model - 1))
+        for idx_conv in range(self.N_model - 1):
+            X_minibatch_BN[:, :, idx_conv] = self.batchnormalize(X_test[:, :, idx_conv],
+                                                                 self.Gamma[idx_conv],
+                                                                 self.Beta[idx_conv],
+                                                                 self.M_local[idx_conv, :], self.Sigma[idx_conv, :])
+
+        s, h = self.decision_value(X_minibatch_BN, X_global_BN, self.N_model, Ns)
+
+        idx_1 = np.where(np.array(label_test) == 1)
+        idx_2 = np.where(np.array(label_test) == 0)
+
+        y_predicted_final = s.copy()
+        y_predicted_final[np.where(y_predicted_final >= 0.5)] = int(1)
+        y_predicted_final[np.where(y_predicted_final < 0.5)] = int(0)
+
+        acc = np.sum((y_predicted_final == label_test) != 0) / np.shape(y_predicted_final)[0]
+
+        n_positive = np.sum(label_test == 1)
+        n_negative = np.sum(label_test == 0)
+        n_tp = np.sum(y_predicted_final.T * label_test.T)
+        n_fp = np.sum((y_predicted_final.T == 1) * (label_test.T == 0))
+
+        tpr = n_tp / n_positive
+        fpr = n_fp / n_negative
+        fpr_1, tpr_1, thresholds = roc_curve(label_test, s)
+        auc = metrics_auc(fpr_1, tpr_1)
+        ba = (tpr + (1 - fpr)) / 2
+        return ba, acc, tpr, fpr, auc
 
     def train_model(self):
         self.get_3Dconv()
@@ -583,9 +619,13 @@ class XGBDIM():
         self.Tset_train = self.Tset_train[:, :, self.I_sort[:self.N_model]]
 
         'Downsampling negative samples'
-        idx_nontarget_train = [i for i in range(self.K2)]
-        random.shuffle(idx_nontarget_train)
-        idx_selected_2 = idx_nontarget_train[:self.K1]
+        if self.random_downsampling_flag:
+            idx_nontarget_train = [i for i in range(self.K2)]
+            random.shuffle(idx_nontarget_train)
+            idx_selected_2 = idx_nontarget_train[:self.K1]
+        else:
+            idx_selected_2 = np.arange(0, self.K2, round(self.K2 / self.K1))
+
         self.NTset_train = self.NTset_train[idx_selected_2, :, :]
         self.NTset_train_global = self.NTset_train_global[:, :, idx_selected_2]
         self.K2 = np.shape(idx_selected_2)[0]
