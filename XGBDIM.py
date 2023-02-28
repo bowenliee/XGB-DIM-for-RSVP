@@ -5,7 +5,7 @@ Author: Bowen Li, Tsinghua University
 import numpy as np
 import os
 import h5py
-# import time
+import time
 import random
 from sklearn.metrics import roc_curve
 from sklearn.metrics import auc as metrics_auc
@@ -177,10 +177,12 @@ class XGBDIM():
     def get_data(self, dataset):
         X1, X2, K1, K2 = self.read_data(dataset)
         X1, X2 = self.preprocess(X1, X2, K1, K2)
+        print('Time cost: ', time.time() - self.start_time)
         Tset, NTset = self.get_3D_cuboids(X1, X2, K1, K2)
         Tset_global = X1.copy()
         NTset_global = X2.copy()
         print('EEG reshaped !')
+        print('Time cost: ', time.time() - self.start_time)
         return Tset, NTset, Tset_global, NTset_global, K1, K2
 
     def get_order_step(self):
@@ -202,7 +204,7 @@ class XGBDIM():
                         self.NTset_train[k, :, idx_conv] - M2[idx_conv, :])
                 R2 = R2 / self.K2
                 distance_0_1[idx_conv] = np.trace(
-                    np.linalg.pinv(R1 + R2) * np.matrix(M2[idx_conv, :] - M1[idx_conv, :]).T * np.matrix(
+                    np.linalg.pinv(R1 + R2) @ np.matrix(M2[idx_conv, :] - M1[idx_conv, :]).T @ np.matrix(
                         M2[idx_conv, :] - M1[idx_conv, :]))
             dist = np.sort(distance_0_1)[::-1]
             self.I_sort = np.argsort(distance_0_1)[::-1]
@@ -259,7 +261,10 @@ class XGBDIM():
                 for p in range(N_te):
                     h[n, 0] = h[n, 0] + self.W_global[m, :] @ X_minibatch_BN_global[:, :, n] @ self.Q_global[:, p] / N_sp / N_te
             h[n, 0] = h[n, 0] + self.b_global
-            h[n, 0] = self.gstf_weight * h[n, 0]
+
+            if N_model > 1:
+                 h[n, 0] = self.gstf_weight * h[n, 0]
+
             for k in range(N_model-1):
                 f_k = self.W_local[k, 1:self.T_local+1] @ X_minibatch_BN[n, :, k].T + self.W_local[k, 0]
                 h[n, 0] = h[n, 0] + self.lr_model[k] * f_k
@@ -321,6 +326,8 @@ class XGBDIM():
         # X_minibatch_BN = np.zeros((Ns, self.T_local, N_model - 1))
         if N_model == 1:
             s, self.h_GH_temp = self.decision_value(0, X_global_BN_1, N_model, Ns)
+            s = 1 / (1 + np.exp(-self.h_GH_temp))
+            self.h_GH_temp = self.h_GH_temp * self.gstf_weight
         else:
             for n in range(Ns):
                 X_minibatch_BN = self.batchnormalize(X_local[n, :, N_model-2].reshape((1, self.T_local)), self.Gamma[N_model-2],
@@ -330,10 +337,16 @@ class XGBDIM():
                 # self.W_local[k, 1:self.T_local + 1] @ X_minibatch_BN[n, :, k].T + self.W_local[k, 0]
                 self.h_GH_temp[n, 0] = self.h_GH_temp[n, 0] + self.lr_model[N_model-2] * f_k
 
-        s = 1 / (1 + np.exp(-self.h_GH_temp))
+            s = 1 / (1 + np.exp(-self.h_GH_temp))
+
         G_k = (self.C1 - self.C0) * s * label - self.C1 * label + self.C0 * s
         H_k = ((self.C1 - self.C0) * label + self.C0) * s * (1 - s)
-        return G_k, H_k
+
+        G_k_T = G_k[label == 1].reshape((np.sum(label == 1), 1))
+        H_k_T = H_k[label == 1].reshape((np.sum(label == 1), 1))
+        G_k_N = G_k[label == 0].reshape((np.sum(label == 0), 1))
+        H_k_N = H_k[label == 0].reshape((np.sum(label == 0), 1))
+        return G_k_T, H_k_T, G_k_N, H_k_N
 
     def MBGD_global_STF(self, idx_batch, idx_model):
 
@@ -610,6 +623,7 @@ class XGBDIM():
         return ba, acc, tpr, fpr, auc
 
     def train_model(self):
+        self.start_time = time.time()
         self.get_3Dconv()
         self.Tset_train, self.NTset_train, self.Tset_train_global, self.NTset_train_global, self.K1, self.K2 = \
             self.get_data(self.trainset)
@@ -645,6 +659,8 @@ class XGBDIM():
         self.label_train = np.concatenate((np.ones((self.Nb, 1)), np.zeros((self.Nb, 1))), 0)
         self.label_all = np.concatenate((np.ones((self.K1, 1)), np.zeros((self.K2, 1))), 0)
 
+        X_train_global = np.concatenate((self.Tset_train_global, self.NTset_train_global), axis=2)
+        X_train_local = np.concatenate((self.Tset_train, self.NTset_train), axis=0)
         '''INITIALIZATION'''
         N_sp = 1
         N_te = 1
@@ -693,6 +709,7 @@ class XGBDIM():
         idx_model = 0
         for idx_conv in range(self.N_model + 1):
             if idx_conv == 0:
+                starttime = time.time()
                 idx_model += 1  #
                 for idx_iteration in range(self.N_iteration):
                     idx_sample_target_train = [i for i in range(self.K1)]
@@ -714,16 +731,13 @@ class XGBDIM():
                     tpr_all = tpr
                     fpr_all = fpr
                     auc_all = auc
-
+                print('GSTF time cost: ', time.time() - starttime)
                 print('Subject %d Model %d/300 done !' % (self.sub_idx, idx_model))
                 print('ACC %f TPR %f FPR %f AUC %f' % (Accvalidation, tpr, fpr, auc))
 
             else:  #
-                G_k_T, H_k_T = self.get_GH(self.Tset_train_global, self.Tset_train[:, :, :idx_conv],
-                                                np.ones((np.shape(self.Tset_train)[0], 1)), idx_model)
-
-                G_k_N, H_k_N = self.get_GH(self.NTset_train_global, self.NTset_train[:, :, :idx_conv],
-                                                np.zeros((np.shape(self.NTset_train)[0], 1)), idx_model)
+                [G_k_T, H_k_T,
+                 G_k_N, H_k_N]= self.get_GH(X_train_global, X_train_local[:, :, :idx_conv], self.label_all, idx_model)
 
                 idx_model = idx_model + 1
 
