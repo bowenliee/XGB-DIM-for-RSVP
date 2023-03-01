@@ -10,3 +10,6 @@ https://iopscience.iop.org/article/10.1088/1741-2552/acb96f
 
 # Updated 2023-02-28
 The GPU-version based on Torch has been upload. The implementation of the optimizer is slightly different from the CPU version, thus some parameters should be changed. At present, the performance of the GPU version is not as good as that of the CPU version. We will continue to optimize it. The GPU version has reduced more than 90% of the training time, so multiple-XGB-DIM models will be introduced later to further improve performance.
+
+# Updated 2023-03-01
+I found a bug in GPU version and solved it. The performance of GPU version is closer to CPU one.
