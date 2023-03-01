@@ -8,6 +8,7 @@ import h5py
 import torch as tc
 import torch.optim as optim
 import torch.nn as nn
+from torch.utils.data import Dataset, DataLoader
 import time
 import random
 from sklearn.metrics import roc_curve
@@ -52,7 +53,7 @@ class model_GSTF(nn.Module):
     def forward(self, x):
         # input x: (60, 250, batch_size) -> (batch_size, 250, 60)
         x = self.Gamma_global * x + self.Beta_global
-        h = tc.bmm(x.permute(2, 1, 0), self.W_global.repeat(x.shape[2], 1, 1))
+        h = tc.bmm(x, self.W_global.repeat(x.shape[0], 1, 1))
         self.h = tc.mm(h.squeeze(-1), self.Q_global) + self.b_global
         s = tc.sigmoid(self.h)
         return s
@@ -85,6 +86,50 @@ class loss_model_local(nn.Module):
         # H_k: (batch_size, 1)
         return tc.mean(self.G_k * x + 0.5 * self.H_k * (x ** 2))
 
+class Dataset_global(Dataset):
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        self.indices = list(range(x.shape[0]))
+
+    def __getitem__(self, index):
+        # Get a single sample from the dataset
+        x = self.x[index, :, :]
+        label = self.y[index]
+        indices = self.indices[index]
+        # Convert to tensors and return
+        # x = tc.FloatTensor(x)
+        # label = tc.LongTensor(label)
+        return x, label, indices
+
+    def __len__(self):
+        # Return the size of the dataset
+        return len(self.x)
+
+class Dataset_local(Dataset):
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        self.indices = list(range(x.shape[0]))
+
+    def __getitem__(self, index):
+        # Get a single sample from the dataset
+        x = self.x[index]
+        label = self.y[index]
+        indices = self.indices[index]
+        # Convert to tensors and return
+        # x = tc.FloatTensor(x)
+        # label = tc.LongTensor(label)
+        return x, label, indices
+
+    def __len__(self):
+        # Return the size of the dataset
+        return len(self.x)
+'''
+dataset = MyDataset(X, y)
+batch_size = 32
+dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+'''
 class XGBDIM():
 
     def __init__(self, data_path, sub_idx, trainset, validationset,
@@ -327,7 +372,7 @@ class XGBDIM():
             X_minibatch_BN[:, :, idx_conv] = self.batchnormalize(self.X_validation[:, :, idx_conv],
                                                                  self.M_local[idx_conv, :], self.Sigma[idx_conv, :])
 
-        s, h = self.decision_value(X_minibatch_BN, X_global_BN, model_all, Ns)
+        s, h = self.decision_value(X_minibatch_BN, X_global_BN.permute(2, 1, 0), model_all, Ns)
 
         idx_1 = tc.where(tc.eq(self.label_validation, 1))[0]
         idx_2 = tc.where(tc.eq(self.label_validation, 0))[0]
@@ -356,7 +401,7 @@ class XGBDIM():
         X_global_BN_1 = self.batchnormalize_global(X_global, self.M_global, self.Sigma_global)
         # X_minibatch_BN = np.zeros((Ns, self.T_local, N_model - 1))
         if N_model == 1:
-            s, self.h_GH_temp = self.decision_value(0, X_global_BN_1, model_all, Ns)
+            s, self.h_GH_temp = self.decision_value(0, X_global_BN_1.permute(2, 1, 0), model_all, Ns)
             s = 1 / (1 + tc.exp(-self.h_GH_temp))
             self.h_GH_temp = self.h_GH_temp * self.gstf_weight
         else:
@@ -372,11 +417,11 @@ class XGBDIM():
 
         # self.h_T_temp = self.h_GH_temp[label == 1].view(tc.sum(label == 1), 1)
         # self.h_N_temp = self.h_GH_temp[label == 0].view(tc.sum(label == 0), 1)
-        G_k_T = G_k[label == 1].view(tc.sum(label == 1), 1)
-        H_k_T = H_k[label == 1].view(tc.sum(label == 1), 1)
-        G_k_N = G_k[label == 0].view(tc.sum(label == 0), 1)
-        H_k_N = H_k[label == 0].view(tc.sum(label == 0), 1)
-        return G_k_T, H_k_T, G_k_N, H_k_N
+        # G_k_T = G_k[label == 1].view(tc.sum(label == 1), 1)
+        # H_k_T = H_k[label == 1].view(tc.sum(label == 1), 1)
+        # G_k_N = G_k[label == 0].view(tc.sum(label == 0), 1)
+        # H_k_N = H_k[label == 0].view(tc.sum(label == 0), 1)
+        return G_k, H_k
 
     def update_BN_global(self, X_train_global_BN, idx_batch):
 
@@ -543,26 +588,19 @@ class XGBDIM():
         for idx_conv in range(self.N_model + 1):
             if idx_conv == 0:
                 start_time = time.time()
+                self.update_BN_global(X_train_global_all, 1)
+                X_train_global_BN = self.batchnormalize_global(X_train_global_all, self.M_global, self.Sigma_global)
+                dataset_global = Dataset_global(X_train_global_BN.permute(2, 1, 0), self.label_all)
+                dataloader_global = DataLoader(dataset_global, batch_size=int(self.N_batch), shuffle=True)
                 model= model_GSTF(self.Tset_train_global.shape[0], self.Tset_train_global.shape[1]).cuda(0)
                 criterion = nn.CrossEntropyLoss()
                 optimizer_global = optim.SGD(model.parameters(), lr=self.alpha)
                 idx_model += 1  #
-                for idx_iteration in range(self.N_iteration):
-                    idx_sample_target_train = [i for i in range(self.K1)]
-                    random.shuffle(idx_sample_target_train)
-                    select_1_idx = idx_sample_target_train[:self.Nb]
+                for idx_iteration, (data, target, indices) in enumerate(dataloader_global):
 
-                    idx_sample_nontarget_train = [i for i in range(self.K2)]
-                    random.shuffle(idx_sample_nontarget_train)
-                    select_2_idx = idx_sample_nontarget_train[:self.Nb]
-
-                    X_train_global = tc.cat(
-                        (self.Tset_train_global[:, :, select_1_idx], self.NTset_train_global[:, :, select_2_idx]), dim=2)
-                    self.update_BN_global(X_train_global_all, idx_iteration)
-                    X_train_global_BN = self.batchnormalize_global(X_train_global, self.M_global, self.Sigma_global)
                     optimizer_global.zero_grad()
-                    outputs = model(X_train_global_BN) #X_train_global_BN, idx_batch
-                    loss = criterion(outputs.view(1, -1), self.label_train.view(1, -1)) + self.eta * model.W_global.norm(2)**2\
+                    outputs = model(data) #X_train_global_BN, idx_batch
+                    loss = criterion(outputs.view(1, -1), target.view(1, -1)) + self.eta * model.W_global.norm(2)**2\
                                                                                         + self.eta * model.Q_global.norm(2)**2
                     loss.backward()
                     optimizer_global.step()
@@ -578,38 +616,30 @@ class XGBDIM():
 
             else:  #
                 start_time = time.time()
-                [G_k_T, H_k_T,
-                 G_k_N, H_k_N] = self.get_GH(X_train_global_all, X_train_local_all, self.label_all, model_all)
+                G_k, H_k = self.get_GH(X_train_global_all, X_train_local_all, self.label_all, model_all)
                 if self.crossentropy_flag:
                     s_temp = tc.sigmoid(self.h_GH_temp)
                     cross_entropy_temp = crossentropy(s_temp.view(1,-1), self.label_all.view(1,-1))
                     print('Cross_entropy: ', cross_entropy_temp.item())
+
                 idx_model = idx_model + 1
+                self.update_BN_local(X_train_local_all[:, :, idx_model-2], 1, idx_model)
+                X_train_local_BN = self.batchnormalize(X_train_local_all[:, :, idx_model-2],
+                                                       self.M_local[idx_model-2, :], self.Sigma[idx_model-2, :])
+                dataset_local = Dataset_local(X_train_local_BN, self.label_all)
+                dataloader_local = DataLoader(dataset_local, batch_size=int(self.N_batch), shuffle=True)
+
                 model = model_local(self.T_local).cuda(0)
                 optimizer_local = optim.SGD(model.parameters(), lr=self.alpha)
 
-                for idx_iteration in range(self.N_iteration):
-                    idx_sample_target_train = [i for i in range(self.K1)]
-                    random.shuffle(idx_sample_target_train)
-                    select_1_idx = idx_sample_target_train[:self.Nb]
+                for idx_iteration, (data, target, indices) in enumerate(dataloader_local):
 
-                    idx_sample_nontarget_train = [i for i in range(self.K2)]
-                    random.shuffle(idx_sample_nontarget_train)
-                    select_2_idx = idx_sample_nontarget_train[:self.Nb]
-                    # self.X_train_global = tc.cat(
-                    #     (self.Tset_train_global[:, :, select_1_idx], self.NTset_train_global[:, :, select_2_idx]), dim=2)
-                    X_train_local = tc.cat(
-                        (self.Tset_train[select_1_idx, :, idx_conv-1], self.NTset_train[select_2_idx, :, idx_conv-1]), dim=0)
+                    G_k_in = G_k[indices].clone().detach()
+                    H_k_in = H_k[indices].clone().detach()
 
-                    self.update_BN_local(X_train_local, idx_iteration, idx_model)
-                    X_train_local_BN = self.batchnormalize(X_train_local, self.M_local[idx_model-2, :], self.Sigma[idx_model-2, :])
-
-                    G_k = tc.cat((G_k_T[select_1_idx], G_k_N[select_2_idx]), dim=0).clone().detach()
-                    H_k = tc.cat((H_k_T[select_1_idx], H_k_N[select_2_idx]), dim=0).clone().detach()
-
-                    criterion = loss_model_local(G_k, H_k)
+                    criterion = loss_model_local(G_k_in, H_k_in)
                     optimizer_local.zero_grad()
-                    outputs_local = model(X_train_local_BN)
+                    outputs_local = model(data)
                     loss_local = criterion(outputs_local) + self.eta * model.w_local.norm(2)**2
                     loss_local.backward()
                     optimizer_local.step()
