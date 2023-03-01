@@ -46,13 +46,13 @@ class model_GSTF(nn.Module):
         self.W_global = nn.Parameter(0.01 * tc.randn(N_chan, 1))
         self.Q_global = nn.Parameter(0.01 * tc.randn(N_time, 1))
         self.b_global = nn.Parameter(tc.zeros(1).float())
-        # self.Gamma_global = nn.Parameter(tc.ones(1).float())
-        # self.Beta_global = nn.Parameter(tc.zeros(1).float())
+        self.Gamma_global = nn.Parameter(tc.ones(1).float())
+        self.Beta_global = nn.Parameter(tc.zeros(1).float())
         self.h = 0
 
     def forward(self, x):
         # input x: (60, 250, batch_size) -> (batch_size, 250, 60)
-        # x = self.Gamma_global * x + self.Beta_global
+        x = self.Gamma_global * x + self.Beta_global
         h = tc.bmm(x, self.W_global.repeat(x.shape[0], 1, 1))
         self.h = tc.mm(h.squeeze(-1), self.Q_global) + self.b_global
         s = tc.sigmoid(self.h)
@@ -63,13 +63,13 @@ class model_local(nn.Module):
         super(model_local, self).__init__()
         self.w_local = nn.Parameter(0.01 * tc.randn(T_local, 1))
         self.b_local = nn.Parameter(tc.zeros(1).float())
-        # self.gamma_local = nn.Parameter(tc.ones(1).float())
-        # self.beta_local = nn.Parameter(tc.zeros(1).float())
+        self.gamma_local = nn.Parameter(tc.ones(1).float())
+        self.beta_local = nn.Parameter(tc.zeros(1).float())
         self.fk = 0
 
     def forward(self, x):
         # input x: (batch_size, T_local)
-        # x = self.gamma_local * x + self.beta_local
+        x = self.gamma_local * x + self.beta_local
         f = tc.mm(x, self.w_local) + self.b_local
         self.fk = f
         return f
