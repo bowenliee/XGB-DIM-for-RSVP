@@ -43,8 +43,8 @@ random_downsampling_flag: whether to use the random downsampling for the negativ
 class model_GSTF(nn.Module):
     def __init__(self, N_chan, N_time):
         super(model_GSTF, self).__init__()
-        self.W_global = nn.Parameter(0.01 * tc.randn(N_chan, 1))
-        self.Q_global = nn.Parameter(0.01 * tc.randn(N_time, 1))
+        self.W_global = nn.Parameter(0.01 + 0.01 * tc.randn(N_chan, 1))
+        self.Q_global = nn.Parameter(0.01 + 0.01 * tc.randn(N_time, 1))
         self.b_global = nn.Parameter(tc.zeros(1).float())
         self.Gamma_global = nn.Parameter(tc.ones(1).float())
         self.Beta_global = nn.Parameter(tc.zeros(1).float())
@@ -61,7 +61,7 @@ class model_GSTF(nn.Module):
 class model_local(nn.Module):
     def __init__(self, T_local):
         super(model_local, self).__init__()
-        self.w_local = nn.Parameter(0.0 * tc.randn(T_local, 1))
+        self.w_local = nn.Parameter(0.01 + 0.01 * tc.randn(T_local, 1))
         self.b_local = nn.Parameter(tc.zeros(1).float())
         self.gamma_local = nn.Parameter(tc.ones(1).float())
         self.beta_local = nn.Parameter(tc.zeros(1).float())
@@ -211,15 +211,7 @@ class XGBDIM():
         self.N_model = np.shape(self.window_st)[0] * np.shape(self.channel_conv)[0]
         self.N_win = np.shape(self.window_st)[0]
         self.N_chanwin = np.shape(self.channel_conv)[0]
-        # self.mask = np.zeros((60, 250, self.N_model))
-        # idx_conv = 0
-        # for idx_chan in range(self.N_chanwin):
-        #     for idx_win in range(self.N_win):
-        #         self.mask[self.channel[self.channel_conv[idx_chan, :] - 1] - 1,
-        #                     self.window_st[idx_win] - 1:self.window_ov[idx_win], idx_conv] = 1
-        #         idx_conv += 1
-        # # self.mask.dtype = 'bool'
-        # self.mask = tc.from_numpy(self.mask).bool().cuda(0)
+
         self.N_conv = self.N_win * self.N_chanwin
         self.N_model = min([self.N_conv, self.max_N_model])
 
@@ -230,8 +222,6 @@ class XGBDIM():
             All_X1 = []
             All_X2 = []
             for idx_set in range(N_trainsets):
-                # Sub1_L1
-                # data = h5py.File(os.path.join(r'D:\sub1data\sub1', 'sub'+str(sub_idx)+'_'+str(trainset[idx_set])+'_data.mat'))  #因为N_trainsets只有一个，所以先写死测试一下；
                 data = h5py.File(
                     os.path.join(
                         self.data_path, 'sub' + str(self.sub_idx) + '_' + str(dataset[idx_set]) + '_data.mat'
@@ -361,18 +351,18 @@ class XGBDIM():
         # h = tc.zeros((Ns, 1)).cuda(0)
         N_model = len(model_all)
         gstf = model_all[0]
-        gstf(X_minibatch_BN_global)
+        s = gstf(X_minibatch_BN_global)
         h = gstf.h
         if N_model > 1:
             h = self.gstf_weight * h
 
-        for idx_model in range(1, N_model):
-            local_model = model_all[idx_model]
-            local_model(X_minibatch_BN[:, :, idx_model - 1])
-            f = local_model.fk
-            h = h + self.lr_model[idx_model - 1, 0] * f
+            for idx_model in range(1, N_model):
+                local_model = model_all[idx_model]
+                local_model(X_minibatch_BN[:, :, idx_model - 1])
+                f = local_model.fk
+                h = h + self.lr_model[idx_model - 1, 0] * f
 
-        s = 1 / (1 + tc.exp(-1 * h))
+            s = tc.sigmoid(h)
         return s, h
 
     def validation(self, model_all):
@@ -415,7 +405,6 @@ class XGBDIM():
         if N_model == 1:
             s, self.h_GH_temp = self.decision_value(0, X_global.permute(2, 1, 0), model_all, Ns)
             # s = 1 / (1 + tc.exp(-self.h_GH_temp))
-            s = tc.sigmoid(self.h_GH_temp)
             self.h_GH_temp = self.h_GH_temp * self.gstf_weight
         else:
             # X_minibatch_BN = self.batchnormalize(X_local[:, :, N_model-2], self.M_local[N_model-2, :], self.Sigma[N_model-2, :])
@@ -430,7 +419,7 @@ class XGBDIM():
             # plt.plot(f_k.cpu().detach().numpy())
             # plt.show()
 
-            s = 1 / (1 + tc.exp(-self.h_GH_temp))
+            s = tc.sigmoid(self.h_GH_temp)
         G_k = (self.C1 - self.C0) * s * label - self.C1 * label + self.C0 * s
         H_k = ((self.C1 - self.C0) * label + self.C0) * s * (1 - s)
 
@@ -603,6 +592,7 @@ class XGBDIM():
         '''
         model_all = []
         idx_model = 0
+        X_train_local_BN_last_model = 0
         crossentropy = loss_model_global() #nn.CrossEntropyLoss()
         momentum = list(np.linspace(0.5, 0.99, num=self.N_epoch, endpoint=True))
         for idx_conv in range(self.N_model + 1):
@@ -614,7 +604,7 @@ class XGBDIM():
                 dataloader_global = DataLoader(dataset_global, batch_size=int(self.N_batch), shuffle=True)
                 model= model_GSTF(self.Tset_train_global.shape[0], self.Tset_train_global.shape[1]).cuda(0)
                 criterion = loss_model_global()
-                optimizer_global = optim.Adadelta(model.parameters(), lr=self.alpha_global, rho=0.9, eps=1e-06, weight_decay=0)
+                optimizer_global = optim.Adam(model.parameters(), lr=self.alpha_global)
                 idx_model += 1  #
                 for idx_epoch in range(self.N_epoch):
                     # optimizer_global.momentum = momentum[idx_epoch]
@@ -648,8 +638,9 @@ class XGBDIM():
 
                 dataset_local = Dataset_local(X_train_local_BN, self.label_all)
 
-                G_k, H_k = self.get_GH(X_train_global_BN, X_train_local_BN, self.label_all, model_all)
-
+                G_k, H_k = self.get_GH(X_train_global_BN, X_train_local_BN_last_model, self.label_all, model_all)
+                X_train_local_BN_last_model = X_train_local_BN.clone().detach()
+                ## 更新 的 时机是否有问题？
                 if self.crossentropy_flag:
                     s_temp = tc.sigmoid(self.h_GH_temp)
                     cross_entropy_temp = crossentropy(s_temp.view(1, -1), self.label_all.view(1, -1))
@@ -657,13 +648,11 @@ class XGBDIM():
                 dataloader_local = DataLoader(dataset_local, batch_size=int(self.N_batch), shuffle=True)
 
                 model = model_local(self.T_local).cuda(0)
-                optimizer_local = optim.Adadelta(model.parameters(), lr=self.alpha_local, rho=0.9, eps=1e-06, weight_decay=0)
+                optimizer_local = optim.Adam(model.parameters(), lr=self.alpha_local)
                 criterion = loss_model_local(G_k.clone().detach(), H_k.clone().detach())
                 for idx_epoch in range(self.N_epoch):
                     # optimizer_local.momentum = momentum[idx_epoch]
                     for idx_iteration, (data, target, indices) in enumerate(dataloader_local):
-                        # G_k_in = G_k[indices].clone().detach()
-                        # H_k_in = H_k[indices].clone().detach()
                         optimizer_local.zero_grad()
                         outputs_local = model(data)
                         loss_local = criterion(outputs_local, indices) + self.eta_local * model.w_local.norm(2)**2
@@ -676,10 +665,6 @@ class XGBDIM():
             if self.validation_flag and idx_model % self.validation_step == 0 and idx_model != 0:
                 Accvalidation, tpr, fpr, auc = self.validation(model_all)
                 print('--------------ACC %f TPR %f FPR %f AUC %f' % (Accvalidation, tpr, fpr, auc))
-                # print('ACC %f TPR %f FPR %f AUC %f' % (
-                # Accvalidation[self.N_iteration - 1], tpr[self.N_iteration - 1], fpr[self.N_iteration - 1], auc[self.N_iteration - 1]))
-
-
         print('Model Training Finished !')
         # filename = 'Model_' + str(self.sub_idx) + '.npz'
         # np.savez(os.path.join(self.model_path, filename), W_global=self.W_global, Q_global=self.Q_global, b_global=self.b_global,
@@ -687,6 +672,6 @@ class XGBDIM():
         #          W_local=self.W_local, Gamma=self.Gamma, Beta=self.Beta, Sigma=self.Sigma, M_local=self.M_local, lr_model=self.lr_model,
         #          conv_sort=self.I_sort, Accvalidation_all=Accvalidation_all, tpr_all=tpr_all, fpr_all=fpr_all,
         #          auc_all=auc_all)
-        # return Crossentropy_all, Accvalidation_all, tpr_all, fpr_all, auc_all
+
 
 
