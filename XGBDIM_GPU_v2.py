@@ -61,7 +61,7 @@ class model_GSTF(nn.Module):
 class model_local(nn.Module):
     def __init__(self, T_local):
         super(model_local, self).__init__()
-        self.w_local = nn.Parameter(0.01 * tc.randn(T_local, 1))
+        self.w_local = nn.Parameter(0.0 * tc.randn(T_local, 1))
         self.b_local = nn.Parameter(tc.zeros(1).float())
         self.gamma_local = nn.Parameter(tc.ones(1).float())
         self.beta_local = nn.Parameter(tc.zeros(1).float())
@@ -145,7 +145,7 @@ class XGBDIM():
     def __init__(self, data_path, sub_idx, trainset, validationset,
                  model_path,
                  n_cutpoint, win_len, chan_xlen, chan_ylen, step_x, step_y,
-                 eta, alpha, Nb, N_epoch, C1, C0, max_N_model, gstf_weight,
+                 eta_global, eta_local, alpha_global, alpha_local, Nb, N_epoch, C1, C0, max_N_model, gstf_weight,
                  validation_flag, validation_step, crossentropy_flag, random_downsampling_flag):
 
         self.data_path = data_path
@@ -163,8 +163,10 @@ class XGBDIM():
         self.step_y = step_y
         self.T_local = win_len * self.chan_len
 
-        self.eta = eta
-        self.alpha = alpha
+        self.eta_global = eta_global
+        self.eta_local = eta_local
+        self.alpha_global = alpha_global
+        self.alpha_local = alpha_local
         self.Nb = Nb
         self.N_epoch = N_epoch
         self.C1 = C1
@@ -612,7 +614,7 @@ class XGBDIM():
                 dataloader_global = DataLoader(dataset_global, batch_size=int(self.N_batch), shuffle=True)
                 model= model_GSTF(self.Tset_train_global.shape[0], self.Tset_train_global.shape[1]).cuda(0)
                 criterion = loss_model_global()
-                optimizer_global = optim.SGD(model.parameters(), lr=self.alpha, momentum=0)
+                optimizer_global = optim.Adadelta(model.parameters(), lr=self.alpha_global, rho=0.9, eps=1e-06, weight_decay=0)
                 idx_model += 1  #
                 for idx_epoch in range(self.N_epoch):
                     # optimizer_global.momentum = momentum[idx_epoch]
@@ -620,11 +622,11 @@ class XGBDIM():
 
                         optimizer_global.zero_grad()
                         outputs = model(data) #X_train_global_BN, idx_batch
-                        loss = criterion(outputs.view(-1, 1), target.view(-1, 1)) + self.eta * model.W_global.norm(2)**2\
-                                                                                            + self.eta * model.Q_global.norm(2)**2
+                        loss = criterion(outputs.view(-1, 1), target.view(-1, 1)) \
+                               + self.eta_global * model.W_global.norm(2)**2 + self.eta_global * model.Q_global.norm(2)**2
                         loss.backward()
                         optimizer_global.step()
-                    # print('Epoch: ', idx_epoch+1, '-- GSTF loss: ', loss.item(), end='\t')
+                    print('Epoch: ', idx_epoch+1, '-- GSTF loss: ', loss.item())  #, end='\t'
 
                 print('GSTF time cost: ', time.time() - start_time)
                 print('Subject %d Model %d/300 done !' % (self.sub_idx, idx_model))
@@ -655,7 +657,7 @@ class XGBDIM():
                 dataloader_local = DataLoader(dataset_local, batch_size=int(self.N_batch), shuffle=True)
 
                 model = model_local(self.T_local).cuda(0)
-                optimizer_local = optim.SGD(model.parameters(), lr=self.alpha, momentum=0.9)
+                optimizer_local = optim.Adadelta(model.parameters(), lr=self.alpha_local, rho=0.9, eps=1e-06, weight_decay=0)
                 criterion = loss_model_local(G_k.clone().detach(), H_k.clone().detach())
                 for idx_epoch in range(self.N_epoch):
                     # optimizer_local.momentum = momentum[idx_epoch]
@@ -664,7 +666,7 @@ class XGBDIM():
                         # H_k_in = H_k[indices].clone().detach()
                         optimizer_local.zero_grad()
                         outputs_local = model(data)
-                        loss_local = criterion(outputs_local, indices) + self.eta * model.w_local.norm(2)**2
+                        loss_local = criterion(outputs_local, indices) + self.eta_local * model.w_local.norm(2)**2
                         loss_local.backward()
                         optimizer_local.step()
                     # print('Epoch: ', idx_epoch+1, '-- Local loss: ', loss_local.item(), end='\t')
