@@ -13,7 +13,7 @@ import time
 import random
 from sklearn.metrics import roc_curve
 from sklearn.metrics import auc as metrics_auc
-
+import matplotlib.pyplot as plt
 
 '''
 data_path: the path of the data
@@ -30,7 +30,7 @@ step_y: the step of the channels in y direction
 eta: the regulation coefficient of the L2 norm
 alpha: learning rate
 Nb: the number of P/N samples in one batch
-N_iteration: the number of iterations
+N_epoch: the number of epochs
 C1: the weight of the positive samples
 C0: the weight of the negative samples
 max_N_model: the maximum number of sub models
@@ -43,16 +43,16 @@ random_downsampling_flag: whether to use the random downsampling for the negativ
 class model_GSTF(nn.Module):
     def __init__(self, N_chan, N_time):
         super(model_GSTF, self).__init__()
-        self.W_global = nn.Parameter(0.02 * tc.randn(N_chan, 1))
-        self.Q_global = nn.Parameter(0.02 * tc.randn(N_time, 1))
+        self.W_global = nn.Parameter(0.01 * tc.randn(N_chan, 1))
+        self.Q_global = nn.Parameter(0.01 * tc.randn(N_time, 1))
         self.b_global = nn.Parameter(tc.zeros(1).float())
-        self.Gamma_global = nn.Parameter(tc.ones(1).float())
-        self.Beta_global = nn.Parameter(tc.zeros(1).float())
+        # self.Gamma_global = nn.Parameter(tc.ones(1).float())
+        # self.Beta_global = nn.Parameter(tc.zeros(1).float())
         self.h = 0
 
     def forward(self, x):
         # input x: (60, 250, batch_size) -> (batch_size, 250, 60)
-        x = self.Gamma_global * x + self.Beta_global
+        # x = self.Gamma_global * x + self.Beta_global
         h = tc.bmm(x, self.W_global.repeat(x.shape[0], 1, 1))
         self.h = tc.mm(h.squeeze(-1), self.Q_global) + self.b_global
         s = tc.sigmoid(self.h)
@@ -61,18 +61,28 @@ class model_GSTF(nn.Module):
 class model_local(nn.Module):
     def __init__(self, T_local):
         super(model_local, self).__init__()
-        self.w_local = nn.Parameter(0.02 * tc.randn(T_local, 1))
+        self.w_local = nn.Parameter(0.01 * tc.randn(T_local, 1))
         self.b_local = nn.Parameter(tc.zeros(1).float())
-        self.gamma_local = nn.Parameter(tc.ones(1).float())
-        self.beta_local = nn.Parameter(tc.zeros(1).float())
+        # self.gamma_local = nn.Parameter(tc.ones(1).float())
+        # self.beta_local = nn.Parameter(tc.zeros(1).float())
         self.fk = 0
 
     def forward(self, x):
         # input x: (batch_size, T_local)
-        x = self.gamma_local * x + self.beta_local
+        # x = self.gamma_local * x + self.beta_local
         f = tc.mm(x, self.w_local) + self.b_local
         self.fk = f
         return f
+
+class loss_model_global(nn.Module):
+    def __init__(self):
+        super(loss_model_global, self).__init__()
+
+    def forward(self, x, y):
+        # return crossentropy loss
+        # input x: (batch_size, 1)
+        # input y: (batch_size, 1)
+        return tc.mean(-y * tc.log(x) - (1 - y) * tc.log(1 - x))
 
 class loss_model_local(nn.Module):
     def __init__(self, G_k, H_k):
@@ -80,11 +90,11 @@ class loss_model_local(nn.Module):
         self.G_k = G_k
         self.H_k = H_k
 
-    def forward(self, x):
+    def forward(self, x, index):
         # input x: (batch_size, 1)
         # G_k: (batch_size, 1)
         # H_k: (batch_size, 1)
-        return tc.mean(self.G_k * x + 0.5 * self.H_k * (x ** 2))
+        return tc.mean(self.G_k[index] * x + 0.5 * self.H_k[index] * (x ** 2))
 
 class Dataset_global(Dataset):
     def __init__(self, x, y):
@@ -135,7 +145,7 @@ class XGBDIM():
     def __init__(self, data_path, sub_idx, trainset, validationset,
                  model_path,
                  n_cutpoint, win_len, chan_xlen, chan_ylen, step_x, step_y,
-                 eta, alpha, Nb, N_iteration, C1, C0, max_N_model, gstf_weight,
+                 eta, alpha, Nb, N_epoch, C1, C0, max_N_model, gstf_weight,
                  validation_flag, validation_step, crossentropy_flag, random_downsampling_flag):
 
         self.data_path = data_path
@@ -156,7 +166,7 @@ class XGBDIM():
         self.eta = eta
         self.alpha = alpha
         self.Nb = Nb
-        self.N_iteration = N_iteration
+        self.N_epoch = N_epoch
         self.C1 = C1
         self.C0 = C0
         self.max_N_model = max_N_model
@@ -398,18 +408,25 @@ class XGBDIM():
     def get_GH(self, X_global, X_local, label, model_all):
         N_model = len(model_all)
         Ch, Te, Ns = X_global.shape
-        X_global_BN_1 = self.batchnormalize_global(X_global, self.M_global, self.Sigma_global)
+        # X_global_BN_1 = self.batchnormalize_global(X_global, self.M_global, self.Sigma_global)
         # X_minibatch_BN = np.zeros((Ns, self.T_local, N_model - 1))
         if N_model == 1:
-            s, self.h_GH_temp = self.decision_value(0, X_global_BN_1.permute(2, 1, 0), model_all, Ns)
-            s = 1 / (1 + tc.exp(-self.h_GH_temp))
+            s, self.h_GH_temp = self.decision_value(0, X_global.permute(2, 1, 0), model_all, Ns)
+            # s = 1 / (1 + tc.exp(-self.h_GH_temp))
+            s = tc.sigmoid(self.h_GH_temp)
             self.h_GH_temp = self.h_GH_temp * self.gstf_weight
         else:
-            X_minibatch_BN = self.batchnormalize(X_local[:, :, N_model-2], self.M_local[N_model-2, :], self.Sigma[N_model-2, :])
+            # X_minibatch_BN = self.batchnormalize(X_local[:, :, N_model-2], self.M_local[N_model-2, :], self.Sigma[N_model-2, :])
             local_model = model_all[-1]
-            local_model(X_minibatch_BN)
-            f_k = local_model.fk
+            f_k = local_model(X_local)
+            # f_k = local_model.fk
+            # plt.figure()
+            # plt.title(N_model)
+            # plt.plot(self.h_GH_temp.cpu().detach().numpy())
             self.h_GH_temp = self.h_GH_temp + self.lr_model[N_model-2, 0] * f_k
+            # plt.plot(self.h_GH_temp.cpu().detach().numpy())
+            # plt.plot(f_k.cpu().detach().numpy())
+            # plt.show()
 
             s = 1 / (1 + tc.exp(-self.h_GH_temp))
         G_k = (self.C1 - self.C0) * s * label - self.C1 * label + self.C0 * s
@@ -576,39 +593,43 @@ class XGBDIM():
         self.M_global = tc.zeros((self.Tset_train_global.shape[0], self.Tset_train_global.shape[1])).cuda(0)
 
         'local model'
-        self.M_local = tc.zeros((self.N_model, self.T_local)).float().cuda(0)  # continue from the same window
-        self.Sigma = tc.zeros((self.N_model, self.T_local)).float().cuda(0)  # continue from the same window
+        self.M_local = tc.zeros((self.N_model, self.T_local)).float().cuda(0)
+        self.Sigma = tc.zeros((self.N_model, self.T_local)).float().cuda(0)
 
         '''
         XGB-DIM
         '''
         model_all = []
         idx_model = 0
-        crossentropy = nn.CrossEntropyLoss()
+        crossentropy = loss_model_global() #nn.CrossEntropyLoss()
+        momentum = list(np.linspace(0.5, 0.99, num=self.N_epoch, endpoint=True))
         for idx_conv in range(self.N_model + 1):
             if idx_conv == 0:
                 start_time = time.time()
-                self.update_BN_global(X_train_global_all, 1)
+                self.update_BN_global(X_train_global_all, 0)
                 X_train_global_BN = self.batchnormalize_global(X_train_global_all, self.M_global, self.Sigma_global)
                 dataset_global = Dataset_global(X_train_global_BN.permute(2, 1, 0), self.label_all)
                 dataloader_global = DataLoader(dataset_global, batch_size=int(self.N_batch), shuffle=True)
                 model= model_GSTF(self.Tset_train_global.shape[0], self.Tset_train_global.shape[1]).cuda(0)
-                criterion = nn.CrossEntropyLoss()
-                optimizer_global = optim.SGD(model.parameters(), lr=self.alpha)
+                criterion = loss_model_global()
+                optimizer_global = optim.SGD(model.parameters(), lr=self.alpha, momentum=0)
                 idx_model += 1  #
-                for idx_iteration, (data, target, indices) in enumerate(dataloader_global):
+                for idx_epoch in range(self.N_epoch):
+                    # optimizer_global.momentum = momentum[idx_epoch]
+                    for idx_iteration, (data, target, indices) in enumerate(dataloader_global):
 
-                    optimizer_global.zero_grad()
-                    outputs = model(data) #X_train_global_BN, idx_batch
-                    loss = criterion(outputs.view(1, -1), target.view(1, -1)) + self.eta * model.W_global.norm(2)**2\
-                                                                                        + self.eta * model.Q_global.norm(2)**2
-                    loss.backward()
-                    optimizer_global.step()
-                    print('Iteration: ', idx_iteration+1, '-- GSTF loss: ', loss.item())
+                        optimizer_global.zero_grad()
+                        outputs = model(data) #X_train_global_BN, idx_batch
+                        loss = criterion(outputs.view(-1, 1), target.view(-1, 1)) + self.eta * model.W_global.norm(2)**2\
+                                                                                            + self.eta * model.Q_global.norm(2)**2
+                        loss.backward()
+                        optimizer_global.step()
+                    # print('Epoch: ', idx_epoch+1, '-- GSTF loss: ', loss.item(), end='\t')
 
                 print('GSTF time cost: ', time.time() - start_time)
                 print('Subject %d Model %d/300 done !' % (self.sub_idx, idx_model))
-                model_all.append(model)
+                with tc.no_grad():
+                    model_all.append(model)
                 # validation
                 if self.validation_flag:
                     Accvalidation, tpr, fpr, auc = self.validation(model_all)
@@ -616,36 +637,40 @@ class XGBDIM():
 
             else:  #
                 start_time = time.time()
-                G_k, H_k = self.get_GH(X_train_global_all, X_train_local_all, self.label_all, model_all)
-                if self.crossentropy_flag:
-                    s_temp = tc.sigmoid(self.h_GH_temp)
-                    cross_entropy_temp = crossentropy(s_temp.view(1,-1), self.label_all.view(1,-1))
-                    print('Cross_entropy: ', cross_entropy_temp.item())
-
                 idx_model = idx_model + 1
-                self.update_BN_local(X_train_local_all[:, :, idx_model-2], 1, idx_model)
+
+                self.update_BN_local(X_train_local_all[:, :, idx_model-2], 0, idx_model)
+
                 X_train_local_BN = self.batchnormalize(X_train_local_all[:, :, idx_model-2],
                                                        self.M_local[idx_model-2, :], self.Sigma[idx_model-2, :])
+
                 dataset_local = Dataset_local(X_train_local_BN, self.label_all)
+
+                G_k, H_k = self.get_GH(X_train_global_BN, X_train_local_BN, self.label_all, model_all)
+
+                if self.crossentropy_flag:
+                    s_temp = tc.sigmoid(self.h_GH_temp)
+                    cross_entropy_temp = crossentropy(s_temp.view(1, -1), self.label_all.view(1, -1))
+                    print('Cross_entropy: ', cross_entropy_temp.item())
                 dataloader_local = DataLoader(dataset_local, batch_size=int(self.N_batch), shuffle=True)
 
                 model = model_local(self.T_local).cuda(0)
-                optimizer_local = optim.SGD(model.parameters(), lr=self.alpha)
-
-                for idx_iteration, (data, target, indices) in enumerate(dataloader_local):
-
-                    G_k_in = G_k[indices].clone().detach()
-                    H_k_in = H_k[indices].clone().detach()
-
-                    criterion = loss_model_local(G_k_in, H_k_in)
-                    optimizer_local.zero_grad()
-                    outputs_local = model(data)
-                    loss_local = criterion(outputs_local) + self.eta * model.w_local.norm(2)**2
-                    loss_local.backward()
-                    optimizer_local.step()
-
+                optimizer_local = optim.SGD(model.parameters(), lr=self.alpha, momentum=0.9)
+                criterion = loss_model_local(G_k.clone().detach(), H_k.clone().detach())
+                for idx_epoch in range(self.N_epoch):
+                    # optimizer_local.momentum = momentum[idx_epoch]
+                    for idx_iteration, (data, target, indices) in enumerate(dataloader_local):
+                        # G_k_in = G_k[indices].clone().detach()
+                        # H_k_in = H_k[indices].clone().detach()
+                        optimizer_local.zero_grad()
+                        outputs_local = model(data)
+                        loss_local = criterion(outputs_local, indices) + self.eta * model.w_local.norm(2)**2
+                        loss_local.backward()
+                        optimizer_local.step()
+                    # print('Epoch: ', idx_epoch+1, '-- Local loss: ', loss_local.item(), end='\t')
                 print('Subject %d Model %d/300 done ! Time cost %f' % (self.sub_idx, idx_model, time.time() - start_time))
-                model_all.append(model)
+                with tc.no_grad():
+                    model_all.append(model)
             if self.validation_flag and idx_model % self.validation_step == 0 and idx_model != 0:
                 Accvalidation, tpr, fpr, auc = self.validation(model_all)
                 print('--------------ACC %f TPR %f FPR %f AUC %f' % (Accvalidation, tpr, fpr, auc))
