@@ -545,7 +545,7 @@ class XGBDIM():
                 start_time = time.time()
                 model= model_GSTF(self.Tset_train_global.shape[0], self.Tset_train_global.shape[1]).cuda(0)
                 criterion = nn.CrossEntropyLoss()
-                optimizer_global = optim.Adam(model.parameters(), lr=self.alpha)
+                optimizer_global = optim.SGD(model.parameters(), lr=self.alpha)
                 idx_model += 1  #
                 for idx_iteration in range(self.N_iteration):
                     idx_sample_target_train = [i for i in range(self.K1)]
@@ -562,8 +562,8 @@ class XGBDIM():
                     X_train_global_BN = self.batchnormalize_global(X_train_global, self.M_global, self.Sigma_global)
                     optimizer_global.zero_grad()
                     outputs = model(X_train_global_BN) #X_train_global_BN, idx_batch
-                    loss = criterion(outputs.view(1, -1), self.label_train.view(1, -1)) + self.eta * model.W_global.norm(2)\
-                                                                                        + self.eta * model.Q_global.norm(2)
+                    loss = criterion(outputs.view(1, -1), self.label_train.view(1, -1)) + self.eta * model.W_global.norm(2)**2\
+                                                                                        + self.eta * model.Q_global.norm(2)**2
                     loss.backward()
                     optimizer_global.step()
                     print('Iteration: ', idx_iteration+1, '-- GSTF loss: ', loss.item())
@@ -586,7 +586,7 @@ class XGBDIM():
                     print('Cross_entropy: ', cross_entropy_temp.item())
                 idx_model = idx_model + 1
                 model = model_local(self.T_local).cuda(0)
-                optimizer_local = optim.Adam(model.parameters(), lr=self.alpha)
+                optimizer_local = optim.SGD(model.parameters(), lr=self.alpha)
 
                 for idx_iteration in range(self.N_iteration):
                     idx_sample_target_train = [i for i in range(self.K1)]
@@ -610,7 +610,7 @@ class XGBDIM():
                     criterion = loss_model_local(G_k, H_k)
                     optimizer_local.zero_grad()
                     outputs_local = model(X_train_local_BN)
-                    loss_local = criterion(outputs_local) + self.eta * model.w_local.norm(2)
+                    loss_local = criterion(outputs_local) + self.eta * model.w_local.norm(2)**2
                     loss_local.backward()
                     optimizer_local.step()
 
