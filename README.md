@@ -9,7 +9,7 @@ Journal of Neural Engineering, https://iopscience.iop.org/article/10.1088/1741-2
 In this version, you can find the whole details of parameter optimization, including the extreme gradient boosting, gradient calculation and the specific implementation of Adam. You can compare them with the derivation in the paper.
 
 ## XGB_DIM_GPU_v2
-A GPU version based on Torch lib. '90% time cost reduced' <br/>
+A GPU version based on Torch lib. `90% time cost reduced` <br/>
 Almost all the 'for' cycles have been replaced by tensor calculation, which greatly improves the speed. The models and their losses are clearly defined in each class. Because the optimizer of torch is used, only the details of extreme gradient boosting are retained. <br/>
 The code in this version is more concise, and it is easy to adjust the internal structure or use it to generate improved versions.
 
