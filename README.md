@@ -4,7 +4,7 @@ An ensemble learning method for EEG classification in RSVP tasks
 ## XGB_DIM
 A CPU version, i.e., the version in paper 'Assembling global and local spatial-temporal filters to extract discriminant information of EEG in RSVP task'.
 Journal of Neural Engineering, https://iopscience.iop.org/article/10.1088/1741-2552/acb96f
-In this version, you can find the whole details of parameter optimization, including the gradient calculation and the specific implementation of Adam. You can compare them with the derivation in the paper.
+In this version, you can find the whole details of parameter optimization, including the extreme gradient boosting, gradient calculation and the specific implementation of Adam. You can compare them with the derivation in the paper.
 
 ## XGB_DIM_GPU_v2
 A GPU version based on Torch lib.
