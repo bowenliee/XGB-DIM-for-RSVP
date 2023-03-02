@@ -32,6 +32,7 @@ The GPU version is really faster, so a new version of mutilple-XGB-DIM is coming
 ## Updated 2023-03-02
 ### multiple-XGB-DIM upload
 The multiple-XGB-DIM has been uploaded. This version makes full use of negative samples. Negative samples are randomly or evenly divided into multiple groups, and the number of negative samples in each group is the same as the total number of positive samples. Each group combined with the positive sample group to train the XGB-DIM model. Finally, the models are bagged.<br/>
+In order to observe the change of model performance with the number of models, I chose to generate multiple groups in the order of sub-models, which requires stonger GPU. If the GPU does not support this approach, you can change it to generate the complete XGB-DIM models in the order of groups, and then bag them.
 This version requires a big GPU ( > 8GB). And I will continue to optimize it.
 ### XGB-DIM-GPU version debug
 I found a bug that consumes a lot of GPU memory and fixed it.
