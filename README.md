@@ -1,7 +1,7 @@
 # XGB-DIM-for-RSVP
 An ensemble learning method for EEG classification in RSVP tasks<br/>
 Require:<br/>
-sklearn.metrics.roc_curve | sklearn.metrics.auc | h5py | `torch` | `numpy`
+`torch (necessary)` | `numpy (necessary)` | sklearn.metrics.roc_curve | sklearn.metrics.auc | h5py 
 
 ## XGB_DIM
 A CPU version, i.e., the version in paper 'Assembling global and local spatial-temporal filters to extract discriminant information of EEG in RSVP task'. <br/>
