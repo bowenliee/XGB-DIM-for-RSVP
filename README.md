@@ -39,5 +39,5 @@ This version requires a big GPU ( > 8GB). And I will continue to optimize it.<br
 I found a bug that consumes a lot of GPU memory and fixed it.
 
 ## Updated 2023-03-03
-Function added:  <br/>
+Function added in **`multi_XGB_DIM_GPU_v1`** and **`XGB_DIM_GPU_v2`**:  <br/>
 `Save model`, `Load model` and `Test`
