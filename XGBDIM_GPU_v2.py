@@ -48,15 +48,15 @@ class model_GSTF(nn.Module):
         self.b_global = nn.Parameter(tc.zeros(1).float())
         self.Gamma_global = nn.Parameter(tc.ones(1).float())
         self.Beta_global = nn.Parameter(tc.zeros(1).float())
-        self.h = 0
+        # self.h = 0
 
     def forward(self, x):
         # input x: (60, 250, batch_size) -> (batch_size, 250, 60)
         x = self.Gamma_global * x + self.Beta_global
         h = tc.bmm(x, self.W_global.repeat(x.shape[0], 1, 1))
-        self.h = tc.mm(h.squeeze(-1), self.Q_global) + self.b_global
-        s = tc.sigmoid(self.h)
-        return s
+        h = tc.mm(h.squeeze(-1), self.Q_global) + self.b_global
+        s = tc.sigmoid(h)
+        return s, h
 
 class model_local(nn.Module):
     def __init__(self, T_local):
@@ -65,13 +65,12 @@ class model_local(nn.Module):
         self.b_local = nn.Parameter(tc.zeros(1).float())
         self.gamma_local = nn.Parameter(tc.ones(1).float())
         self.beta_local = nn.Parameter(tc.zeros(1).float())
-        self.fk = 0
+        # self.fk = 0
 
     def forward(self, x):
         # input x: (batch_size, T_local)
         x = self.gamma_local * x + self.beta_local
         f = tc.mm(x, self.w_local) + self.b_local
-        self.fk = f
         return f
 
 class loss_model_global(nn.Module):
@@ -351,15 +350,16 @@ class XGBDIM():
         # h = tc.zeros((Ns, 1)).cuda(0)
         N_model = len(model_all)
         gstf = model_all[0]
-        s = gstf(X_minibatch_BN_global)
-        h = gstf.h
+        s, h = gstf(X_minibatch_BN_global)
+        s = s.detach()
+        h = h.detach()
         if N_model > 1:
             h = self.gstf_weight * h
 
             for idx_model in range(1, N_model):
                 local_model = model_all[idx_model]
-                local_model(X_minibatch_BN[:, :, idx_model - 1])
-                f = local_model.fk
+                f = local_model(X_minibatch_BN[:, :, idx_model - 1])
+                f = f.detach()
                 h = h + self.lr_model[idx_model - 1, 0] * f
 
             s = tc.sigmoid(h)
@@ -459,73 +459,75 @@ class XGBDIM():
 
 
     def load_model(self):
-        filename = 'Model_' + str(self.sub_idx) + '.npz'
-        model = np.load(os.path.join(self.model_path, filename))
-        self.W_local = model['W_local']
-        self.Gamma = model['Gamma']
-        self.Beta = model['Beta']
-        self.Sigma = model['Sigma']
-        self.M_local = model['M_local']
-        self.lr_model = model['lr_model']
-        self.W_global = model['W_global']
-        self.Q_global = model['Q_global']
-        self.b_global = model['b_global']
-        self.Gamma_global = model['Gamma_global']
-        self.Beta_global = model['Beta_global']
-        self.Sigma_global = model['Sigma_global']
-        self.M_global = model['M_global']
-        self.I_sort = model['conv_sort']
-        self.acc = model['Accvalidation_all']
-        self.tpr = model['tpr_all']
-        self.fpr = model['fpr_all']
-        self.auc = model['auc_all']
-        self.N_model = np.shape(self.W_local)[0]
+        filename = 'Model_' + str(self.sub_idx) + '.pt'
+        Model_load = tc.load(os.path.join(self.model_path, filename))
+        model_all = Model_load['Model']
+        Sigma_global = Model_load['Sigma_global']
+        M_global = Model_load['M_global']
+        Sigma_local = Model_load['Sigma_local']
+        M_local = Model_load['M_local']
+        # 'Model_order'
+        # 'local_weight'
+        # 'GSTF_weight'
+        Model_order = Model_load['Model_order']
+        self.lr_model = Model_load['local_weight']
+        self.gstf_weight = Model_load['GSTF_weight']
+        return model_all, Sigma_global, M_global, Sigma_local, M_local, Model_order
 
     def test(self, testset):
-        self.load_model()
+        model_all, Sigma_global, M_global, Sigma_local, M_local, Model_order = self.load_model()
+        Sigma_global, M_global, Sigma_local, M_local, Model_order = \
+            Sigma_global.cuda(0), M_global.cuda(0), Sigma_local.cuda(0), M_local.cuda(0), Model_order.cuda(0)
+        for i in range(len(model_all)):
+            model_all[i] = model_all[i].cuda(0)
         print('Model of Subject %d is loaded' % self.sub_idx)
         self.get_3Dconv()
         Tset_test, NTset_test, Tset_test_global, NTset_test_global, K1t, K2t = \
             self.get_data(testset)
 
-        X_test = np.concatenate((Tset_test, NTset_test), axis=0)
-        X_test_global = np.concatenate((Tset_test_global, NTset_test_global), axis=2)
-        label_test = np.concatenate((np.ones((K1t, 1)), np.zeros((K2t, 1))), axis=0)
-        X_test = X_test[:, :, self.I_sort[:self.N_model]]
+        Tset_test = tc.from_numpy(Tset_test).float().cuda(0)
+        NTset_test = tc.from_numpy(NTset_test).float().cuda(0)
+        Tset_test_global = tc.from_numpy(Tset_test_global).float().cuda(0)
+        NTset_test_global = tc.from_numpy(NTset_test_global).float().cuda(0)
+
+        N_local_model = len(model_all) - 1
+        X_test = tc.cat((Tset_test, NTset_test), dim=0)
+        X_test_global = tc.cat((Tset_test_global, NTset_test_global), dim=2)
+        label_test = tc.cat((tc.ones((K1t, 1)), tc.zeros((K2t, 1))), dim=0).cuda(0)
+        X_test = X_test[:, :, Model_order[:N_local_model]]
         print('Samples obtained!')
-        Ns = np.shape(X_test_global)[2]
+        Ns = X_test_global.shape[2]
+        X_global_BN = self.batchnormalize_global(X_test_global,
+                                                 M_global[:, :],
+                                                 Sigma_global[:, :])
+        X_minibatch_BN = tc.zeros((Ns, self.T_local, N_local_model)).float().cuda(0)
+        for idx_local in range(N_local_model):
+            X_minibatch_BN[:, :, idx_local] = self.batchnormalize(X_test[:, :, idx_local],
+                                                                  M_local[idx_local, :],
+                                                                  Sigma_local[idx_local, :])
+        s, h = self.decision_value(X_minibatch_BN, X_global_BN.permute(2, 1, 0), model_all, Ns)
 
-        X_global_BN = self.batchnormalize_global(X_test_global, self.Gamma_global, self.Beta_global,
-                                                 self.M_global, self.Sigma_global)
-        X_minibatch_BN = np.zeros((Ns, self.T_local, self.N_model - 1))
-        for idx_conv in range(self.N_model - 1):
-            X_minibatch_BN[:, :, idx_conv] = self.batchnormalize(X_test[:, :, idx_conv],
-                                                                 self.Gamma[idx_conv],
-                                                                 self.Beta[idx_conv],
-                                                                 self.M_local[idx_conv, :], self.Sigma[idx_conv, :])
+        idx_1 = tc.where(tc.eq(label_test, 1))[0]
+        idx_2 = tc.where(tc.eq(label_test, 0))[0]
 
-        s, h = self.decision_value(X_minibatch_BN, X_global_BN, self.N_model, Ns)
+        y_predicted_final = s.clone()
+        y_predicted_final[s >= 0.5] = 1
+        y_predicted_final[s < 0.5] = 0
 
-        idx_1 = np.where(np.array(label_test) == 1)
-        idx_2 = np.where(np.array(label_test) == 0)
+        acc = (y_predicted_final == label_test).sum() / y_predicted_final.shape[0]
 
-        y_predicted_final = s.copy()
-        y_predicted_final[np.where(y_predicted_final >= 0.5)] = int(1)
-        y_predicted_final[np.where(y_predicted_final < 0.5)] = int(0)
-
-        acc = np.sum((y_predicted_final == label_test) != 0) / np.shape(y_predicted_final)[0]
-
-        n_positive = np.sum(label_test == 1)
-        n_negative = np.sum(label_test == 0)
-        n_tp = np.sum(y_predicted_final.T * label_test.T)
-        n_fp = np.sum((y_predicted_final.T == 1) * (label_test.T == 0))
+        n_positive = label_test.eq(1).sum()
+        n_negative = label_test.eq(0).sum()
+        n_tp = (y_predicted_final.T * label_test.T).sum()
+        n_fp = ((y_predicted_final.T == 1) * (label_test.T == 0)).sum()
 
         tpr = n_tp / n_positive
         fpr = n_fp / n_negative
-        fpr_1, tpr_1, thresholds = roc_curve(label_test, s)
+        fpr_1, tpr_1, thresholds = roc_curve(label_test.cpu().numpy(), s.detach().cpu().numpy())
         auc = metrics_auc(fpr_1, tpr_1)
         ba = (tpr + (1 - fpr)) / 2
-        return ba, acc, tpr, fpr, auc
+        tc.cuda.empty_cache()
+        return ba.detach().cpu().numpy(), acc.detach().cpu().numpy(), tpr.detach().cpu().numpy(), fpr.detach().cpu().numpy(), auc
 
     def train_model(self):
         self.get_3Dconv()
@@ -611,7 +613,7 @@ class XGBDIM():
                     for idx_iteration, (data, target, indices) in enumerate(dataloader_global):
 
                         optimizer_global.zero_grad()
-                        outputs = model(data) #X_train_global_BN, idx_batch
+                        outputs,_ = model(data) #X_train_global_BN, idx_batch
                         loss = criterion(outputs.view(-1, 1), target.view(-1, 1)) \
                                + self.eta_global * model.W_global.norm(2)**2 + self.eta_global * model.Q_global.norm(2)**2
                         loss.backward()
@@ -640,7 +642,7 @@ class XGBDIM():
 
                 G_k, H_k = self.get_GH(X_train_global_BN, X_train_local_BN_last_model, self.label_all, model_all)
                 X_train_local_BN_last_model = X_train_local_BN.clone().detach()
-                ## 更新 的 时机是否有问题？
+
                 if self.crossentropy_flag:
                     s_temp = tc.sigmoid(self.h_GH_temp)
                     cross_entropy_temp = crossentropy(s_temp.view(1, -1), self.label_all.view(1, -1))
@@ -665,13 +667,19 @@ class XGBDIM():
             if self.validation_flag and idx_model % self.validation_step == 0 and idx_model != 0:
                 Accvalidation, tpr, fpr, auc = self.validation(model_all)
                 print('--------------ACC %f TPR %f FPR %f AUC %f' % (Accvalidation, tpr, fpr, auc))
+
+        filename = 'Model_' + str(self.sub_idx) + '.pt'
+        tc.save({'Model': model_all,
+                 'M_global': self.M_global,
+                 'Sigma_global': self.Sigma_global,
+                 'M_local': self.M_local,
+                 'Sigma_local': self.Sigma,
+                 'Model_order': self.I_sort,
+                 'local_weight': self.lr_model,
+                 'GSTF_weight': self.gstf_weight}, os.path.join(self.model_path, filename))
         print('Model Training Finished !')
-        # filename = 'Model_' + str(self.sub_idx) + '.npz'
-        # np.savez(os.path.join(self.model_path, filename), W_global=self.W_global, Q_global=self.Q_global, b_global=self.b_global,
-        #          Gamma_global=self.Gamma_global, Beta_global=self.Beta_global, Sigma_global=self.Sigma_global, M_global=self.M_global,
-        #          W_local=self.W_local, Gamma=self.Gamma, Beta=self.Beta, Sigma=self.Sigma, M_local=self.M_local, lr_model=self.lr_model,
-        #          conv_sort=self.I_sort, Accvalidation_all=Accvalidation_all, tpr_all=tpr_all, fpr_all=fpr_all,
-        #          auc_all=auc_all)
+
+
 
 
 

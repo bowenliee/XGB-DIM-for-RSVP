@@ -21,10 +21,13 @@ Note:   the validation set in this study is used as the test set
 '''
 
 model_path = 'D:/XGBDIM/Model64'
-xgb = XGBDIM(r'F:\XGB_for_V5_6', 64, np.array([1]), np.array([2, 3, 4]),
+xgb = XGBDIM(r'F:\XGB_for_V5_6', 64, np.array([1]), np.array([1]),
                  model_path,
                  50, 6, 3, 3, 3, 3,
-                 0.5, 0.1, 0.01, 0.05, 100, 20, 1, 1, 299, 0.3, True, 1, True, False)
+                 0.5, 0.1, 0.01, 0.05, 100, 20, 1, 1, 299, 0.3, True, 30, True, False)
 
 xgb.train_model()
+
+ba, acc, tpr, fpr, auc = xgb.test(np.array([2, 3, 4]))
+print('--------------BA %f ACC %f TPR %f FPR %f AUC %f' % (ba, acc, tpr, fpr, auc))
 
