@@ -37,3 +37,7 @@ In order to observe the change of model performance with the number of models, I
 This version requires a big GPU ( > 8GB). And I will continue to optimize it.
 ### XGB-DIM-GPU version debug
 I found a bug that consumes a lot of GPU memory and fixed it.
+
+## Updated 2023-03-03
+Function added:  <br/>
+Save model, Load model, Test
