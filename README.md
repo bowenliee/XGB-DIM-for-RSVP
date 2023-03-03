@@ -1,7 +1,7 @@
 # XGB-DIM-for-RSVP
 An ensemble learning method for EEG classification in RSVP tasks<br/>
 Require:<br/>
-**`torch`**` (necessary)` | **`numpy`**` (necessary)` | sklearn.metrics.roc_curve | sklearn.metrics.auc | h5py  <br/>
+**`torch`**`(necessary)` | **`numpy`**`(necessary)` | sklearn.metrics.roc_curve | sklearn.metrics.auc | h5py  <br/>
 The EEG device is NeuroScan. If EEG from other device is used, the channel list should be adjusted to the form of Neuroscan.
 
 ## XGB_DIM
@@ -40,4 +40,4 @@ I found a bug that consumes a lot of GPU memory and fixed it.
 
 ## Updated 2023-03-03
 Function added:  <br/>
-Save model, Load model, Test
+`Save model`, `Load model` and `Test`
