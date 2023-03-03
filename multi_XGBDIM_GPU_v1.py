@@ -466,7 +466,7 @@ class XGBDIM():
 
 
     def load_model(self):
-        filename = 'Model_' + str(self.sub_idx) + '.pt'
+        filename = 'Model_' + str(self.sub_idx) + '_MG_' + str(self.N_multiple) + '.pt'
         Model_load = tc.load(os.path.join(self.model_path, filename))
         model_all = Model_load['Model']
         Sigma_global = Model_load['Sigma_global']
@@ -578,24 +578,33 @@ class XGBDIM():
                 tc.cat((self.Tset_train_global, self.NTset_train_global[:, :, idx_selected_2[idx_group]]), dim=2)
             )
 
-        self.K2 = self.K1
 
-        Tset_validation, NTset_validation, Tset_validation_global, NTset_validation_global, self.K1v, self.K2v = \
-            self.get_data(self.validationset)
+        if np.array_equal(self.trainset, self.validationset):
+            Tset_validation = self.Tset_train.clone().detach()
+            Tset_validation_global = self.Tset_train_global.clone().detach()
+            NTset_validation = self.NTset_train.clone().detach()
+            NTset_validation_global = self.NTset_train_global.clone().detach()
+            self.K1v = self.K1
+            self.K2v = self.K2
+            self.I_sort = tc.from_numpy(self.I_sort.copy()).cuda(0)
+        else:
+            Tset_validation, NTset_validation, Tset_validation_global, NTset_validation_global, self.K1v, self.K2v = \
+                self.get_data(self.validationset)
 
-        Tset_validation = tc.from_numpy(Tset_validation).float().cuda(0)
-        NTset_validation = tc.from_numpy(NTset_validation).float().cuda(0)
-        Tset_validation_global = tc.from_numpy(Tset_validation_global).float().cuda(0)
-        NTset_validation_global = tc.from_numpy(NTset_validation_global).float().cuda(0)
-        self.I_sort = tc.from_numpy(self.I_sort.copy()).cuda(0)
-        self.X_validation = tc.cat([Tset_validation, NTset_validation], dim=0)
-        self.X_validation = self.X_validation[:, :, self.I_sort[:self.N_model]]
+            Tset_validation = tc.from_numpy(Tset_validation).float().cuda(0)
+            NTset_validation = tc.from_numpy(NTset_validation).float().cuda(0)
+            Tset_validation_global = tc.from_numpy(Tset_validation_global).float().cuda(0)
+            NTset_validation_global = tc.from_numpy(NTset_validation_global).float().cuda(0)
+            self.I_sort = tc.from_numpy(self.I_sort.copy()).cuda(0)
+            self.X_validation = tc.cat([Tset_validation, NTset_validation], dim=0)
+            self.X_validation = self.X_validation[:, :, self.I_sort[:self.N_model]]
 
         self.X_validation_global = tc.cat([Tset_validation_global, NTset_validation_global], dim=2)
 
         self.Nb = np.min([self.Nb, self.K1])
         self.label_validation = tc.cat((tc.ones((self.K1v, 1)), tc.zeros((self.K2v, 1))), dim=0).float().cuda(0)
 
+        self.K2 = self.K1
         self.N_batch = self.Nb * 2
         self.label_train = tc.cat([tc.ones((self.Nb, 1)), tc.zeros((self.Nb, 1))], dim=0).float().cuda(0)
         self.label_all = tc.cat((tc.ones((self.K1, 1)), tc.zeros((self.K2, 1))), dim=0).float().cuda(0)
@@ -703,7 +712,7 @@ class XGBDIM():
                 print('--------------ACC %f TPR %f FPR %f AUC %f' % (Accvalidation, tpr, fpr, auc))
 
 
-        filename = 'Model_' + str(self.sub_idx) + '.pt'
+        filename = 'Model_' + str(self.sub_idx) + '_MG_' + str(self.N_multiple) + '.pt'
         tc.save({'Model': model_all,
                  'M_global': self.M_global,
                  'Sigma_global': self.Sigma_global,

@@ -554,21 +554,30 @@ class XGBDIM():
 
         self.NTset_train = self.NTset_train[idx_selected_2, :, :]
         self.NTset_train_global = self.NTset_train_global[:, :, idx_selected_2]
-        self.K2 = np.shape(idx_selected_2)[0]
 
-        Tset_validation, NTset_validation, Tset_validation_global, NTset_validation_global, self.K1v, self.K2v = \
-            self.get_data(self.validationset)
 
-        Tset_validation = tc.from_numpy(Tset_validation).float().cuda(0)
-        NTset_validation = tc.from_numpy(NTset_validation).float().cuda(0)
-        Tset_validation_global = tc.from_numpy(Tset_validation_global).float().cuda(0)
-        NTset_validation_global = tc.from_numpy(NTset_validation_global).float().cuda(0)
-        self.I_sort = tc.from_numpy(self.I_sort.copy()).cuda(0)
-        self.X_validation = tc.cat([Tset_validation, NTset_validation], dim=0)
-        self.X_validation = self.X_validation[:, :, self.I_sort[:self.N_model]]
+        if np.array_equal(self.trainset, self.validationset):
+            Tset_validation = self.Tset_train.clone().detach()
+            Tset_validation_global = self.Tset_train_global.clone().detach()
+            NTset_validation = self.NTset_train.clone().detach()
+            NTset_validation_global = self.NTset_train_global.clone().detach()
+            self.K1v = self.K1
+            self.K2v = self.K2
+            self.I_sort = tc.from_numpy(self.I_sort.copy()).cuda(0)
+        else:
+            Tset_validation, NTset_validation, Tset_validation_global, NTset_validation_global, self.K1v, self.K2v = \
+                self.get_data(self.validationset)
+
+            Tset_validation = tc.from_numpy(Tset_validation).float().cuda(0)
+            NTset_validation = tc.from_numpy(NTset_validation).float().cuda(0)
+            Tset_validation_global = tc.from_numpy(Tset_validation_global).float().cuda(0)
+            NTset_validation_global = tc.from_numpy(NTset_validation_global).float().cuda(0)
+            self.I_sort = tc.from_numpy(self.I_sort.copy()).cuda(0)
+            self.X_validation = tc.cat([Tset_validation, NTset_validation], dim=0)
+            self.X_validation = self.X_validation[:, :, self.I_sort[:self.N_model]]
 
         self.X_validation_global = tc.cat([Tset_validation_global, NTset_validation_global], dim=2)
-
+        self.K2 = np.shape(idx_selected_2)[0]
         self.Nb = np.min([self.Nb, self.K1])
         self.label_validation = tc.cat((tc.ones((self.K1v, 1)), tc.zeros((self.K2v, 1))), dim=0).float().cuda(0)
 
