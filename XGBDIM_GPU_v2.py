@@ -526,8 +526,30 @@ class XGBDIM():
         fpr_1, tpr_1, thresholds = roc_curve(label_test.cpu().numpy(), s.detach().cpu().numpy())
         auc = metrics_auc(fpr_1, tpr_1)
         ba = (tpr + (1 - fpr)) / 2
+
+        Tset_test = Tset_test.clone().detach().cpu()
+        NTset_test = NTset_test.clone().detach().cpu()
+        Tset_test_global = Tset_test_global.clone().detach().cpu()
+        NTset_test_global = NTset_test_global.clone().detach().cpu()
+        Sigma_global = Sigma_global.clone().detach().cpu()
+        M_global = M_global.clone().detach().cpu()
+        Sigma_local = Sigma_local.clone().detach().cpu()
+        M_local = M_local.clone().detach().cpu()
+        Model_order = Model_order.clone().detach().cpu()
+        X_test = X_test.clone().detach().cpu()
+        X_test_global = X_test_global.clone().detach().cpu()
+        X_minibatch_BN = X_minibatch_BN.clone().detach().cpu()
+        X_global_BN = X_global_BN.clone().detach().cpu()
+        label_test = label_test.clone().detach().cpu()
+        y_predicted_final = y_predicted_final.clone().detach().cpu()
+        s = s.clone().detach().cpu()
+        ba = ba.detach().cpu().numpy()
+        acc = acc.detach().cpu().numpy()
+        tpr = tpr.detach().cpu().numpy()
+        fpr = fpr.detach().cpu().numpy()
+
         tc.cuda.empty_cache()
-        return ba.detach().cpu().numpy(), acc.detach().cpu().numpy(), tpr.detach().cpu().numpy(), fpr.detach().cpu().numpy(), auc
+        return ba, acc, tpr, fpr, auc
 
     def train_model(self):
         self.get_3Dconv()
@@ -676,6 +698,37 @@ class XGBDIM():
             if self.validation_flag and idx_model % self.validation_step == 0 and idx_model != 0:
                 Accvalidation, tpr, fpr, auc = self.validation(model_all)
                 print('--------------ACC %f TPR %f FPR %f AUC %f' % (Accvalidation, tpr, fpr, auc))
+
+        self.Tset_train = self.Tset_train.clone().detach().cpu()
+        self.NTset_train = self.NTset_train.clone().detach().cpu()
+        self.Tset_train_global = self.Tset_train_global.clone().detach().cpu()
+        self.NTset_train_global = self.NTset_train_global.clone().detach().cpu()
+        self.lr_model = self.lr_model.clone().detach().cpu()
+
+        Tset_validation = Tset_validation.clone().detach().cpu()
+        NTset_validation = NTset_validation.clone().detach().cpu()
+        Tset_validation_global = Tset_validation_global.clone().detach().cpu()
+        NTset_validation_global = NTset_validation_global.clone().detach().cpu()
+
+        self.I_sort = self.I_sort.clone().detach().cpu()
+        self.X_validation = self.X_validation.clone().detach().cpu()
+        self.X_validation_global = self.X_validation_global.clone().detach().cpu()
+        self.label_validation = self.label_validation.clone().detach().cpu()
+        self.label_train = self.label_train.clone().detach().cpu()
+        self.label_all = self.label_all.clone().detach().cpu()
+
+        self.Sigma_global = self.Sigma_global.clone().detach().cpu()
+        self.M_global = self.M_global.clone().detach().cpu()
+        self.M_local = self.M_local.clone().detach().cpu()
+        self.Sigma = self.Sigma.clone().detach().cpu()
+        # dataset_local = dataset_local.clone().detach().cpu()
+        # dataset_global = dataset_global.clone().detach().cpu()
+
+        self.h_GH_temp = self.h_GH_temp.clone().detach().cpu()
+        X_train_local_all = X_train_local_all.clone().detach().cpu()
+        X_train_global_all = X_train_global_all.clone().detach().cpu()
+        X_train_local_BN_last_model = X_train_local_BN_last_model.clone().detach().cpu()
+        X_train_global_BN = X_train_global_BN.clone().detach().cpu()
 
         filename = 'Model_' + str(self.sub_idx) + '.pt'
         tc.save({'Model': model_all,
