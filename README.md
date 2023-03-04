@@ -42,3 +42,4 @@ I found a bug that consumes a lot of GPU memory and fixed it.
 Function added in **`multi_XGB_DIM_GPU_v1`** and **`XGB_DIM_GPU_v2`**:  <br/>
 `Save model`, `Load model` and `Test`  <br/>
 If the trainset is used as validationset, skip loading validationset
+**`Debug  `**Release the GPU memory after training or testing.
