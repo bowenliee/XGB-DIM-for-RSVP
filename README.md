@@ -43,3 +43,8 @@ Function added in **`multi_XGB_DIM_GPU_v1`** and **`XGB_DIM_GPU_v2`**:  <br/>
 `Save model`, `Load model` and `Test`  <br/>
 If the trainset is used as validationset, skip loading validationset
 **`Debug  `**Release the GPU memory after training or testing.
+
+## Updated 2023-03-06
+**Stability optimization** in **`multi_XGB_DIM_GPU_v1`** and **`XGB_DIM_GPU_v2`**:  <br/>
+Add a correction item in CrossEntropy Loss: tc.mean(-y * tc.log(x + `1e-6`) - (1 - y) * tc.log(1 - x + `1e-6`)) <br/>
+to avoid **nan**
