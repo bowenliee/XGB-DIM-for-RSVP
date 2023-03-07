@@ -163,6 +163,7 @@ class XGBDIM():
         self.step_y = step_y
         self.T_local = win_len * self.chan_len
         self.N_multiple = N_multiple
+        self.N_multiple_save = N_multiple
 
         self.eta_global = eta_global
         self.eta_local = eta_local
@@ -466,7 +467,7 @@ class XGBDIM():
 
 
     def load_model(self):
-        filename = 'Model_' + str(self.sub_idx) + '_MG_' + str(self.N_multiple) + '.pt'
+        filename = 'Model_' + str(self.sub_idx) + '_MG_' + str(self.N_multiple_save) + '.pt'
         Model_load = tc.load(os.path.join(self.model_path, filename))
         model_all = Model_load['Model']
         Sigma_global = Model_load['Sigma_global']
@@ -481,87 +482,100 @@ class XGBDIM():
         self.gstf_weight = Model_load['GSTF_weight']
         return model_all, Sigma_global, M_global, Sigma_local, M_local, Model_order
 
-    def test(self, testset, N_group):
-        model_all, Sigma_global, M_global, Sigma_local, M_local, Model_order = self.load_model()
-        Sigma_global, M_global, Sigma_local, M_local, Model_order = \
-            Sigma_global.cuda(0), M_global.cuda(0), Sigma_local.cuda(0), M_local.cuda(0), Model_order.cuda(0)
-        for i in range(len(model_all)):
-            for j in range(len(model_all[0])):
-                model_all[i][j] = model_all[i][j].cuda(0)
-        print('Model of Subject %d is loaded' % self.sub_idx)
-        self.get_3Dconv()
-        Tset_test, NTset_test, Tset_test_global, NTset_test_global, K1t, K2t = \
-            self.get_data(testset)
+    def test(self, testset, N_group, continue_test):
+        try:
+            self.Tset_test
+        except:
+            Tset_test_exists = False
+            self.model_all, self.Sigma_global, self.M_global, self.Sigma_local, self.M_local, self.Model_order = self.load_model()
+            self.Sigma_global, self.M_global, self.Sigma_local, self.M_local, self.Model_order = \
+                self.Sigma_global.cuda(0), self.M_global.cuda(0), self.Sigma_local.cuda(0), self.M_local.cuda(0), self.Model_order.cuda(0)
+            for i in range(len(self.model_all)):
+                for j in range(len(self.model_all[0])):
+                    self.model_all[i][j] = self.model_all[i][j].cuda(0)
+            print('Model of Subject %d is loaded' % self.sub_idx)
+            self.get_3Dconv()
+            self.Tset_test, self.NTset_test, self.Tset_test_global, self.NTset_test_global, self.K1t, self.K2t = \
+                self.get_data(testset)
 
-        Tset_test = tc.from_numpy(Tset_test).float().cuda(0)
-        NTset_test = tc.from_numpy(NTset_test).float().cuda(0)
-        Tset_test_global = tc.from_numpy(Tset_test_global).float().cuda(0)
-        NTset_test_global = tc.from_numpy(NTset_test_global).float().cuda(0)
+            self.Tset_test = tc.from_numpy(self.Tset_test).float().cuda(0)
+            self.NTset_test = tc.from_numpy(self.NTset_test).float().cuda(0)
+            self.Tset_test_global = tc.from_numpy(self.Tset_test_global).float().cuda(0)
+            self.NTset_test_global = tc.from_numpy(self.NTset_test_global).float().cuda(0)
 
-        N_group = np.min([N_group, len(model_all)])
-        N_local_model = len(model_all[0]) - 1
-        X_test = tc.cat((Tset_test, NTset_test), dim=0)
-        X_test_global = tc.cat((Tset_test_global, NTset_test_global), dim=2)
-        label_test = tc.cat((tc.ones((K1t, 1)), tc.zeros((K2t, 1))), dim=0).cuda(0)
-        X_test = X_test[:, :, Model_order[:N_local_model]]
-        print('Samples obtained!')
-        Ns = X_test_global.shape[2]
+            self.N_local_model = len(self.model_all[0]) - 1
+            self.X_test = tc.cat((self.Tset_test, self.NTset_test), dim=0)
+            self.X_test_global = tc.cat((self.Tset_test_global, self.NTset_test_global), dim=2)
+            self.label_test = tc.cat((tc.ones((self.K1t, 1)), tc.zeros((self.K2t, 1))), dim=0).cuda(0)
+            self.X_test = self.X_test[:, :, self.Model_order[:self.N_local_model]]
+            print('Samples obtained!')
+        else:
+            Tset_test_exists = True
+            print('Continue test!')
+
+
+
+        N_group = np.min([N_group, len(self.model_all)])
+
+        Ns = self.X_test_global.shape[2]
 
         s_mean = 0
         for idx_group in range(N_group):
-            model_onegroup = model_all[idx_group]
-            X_global_BN = self.batchnormalize_global(X_test_global,
-                                                     M_global[:, :, idx_group],
-                                                     Sigma_global[:, :, idx_group])
-            X_minibatch_BN = tc.zeros((Ns, self.T_local, N_local_model)).float().cuda(0)
-            for idx_local in range(N_local_model):
-                X_minibatch_BN[:, :, idx_local] = self.batchnormalize(X_test[:, :, idx_local],
-                                                                     M_local[idx_local, :, idx_group],
-                                                                     Sigma_local[idx_local, :, idx_group])
+            model_onegroup = self.model_all[idx_group]
+            X_global_BN = self.batchnormalize_global(self.X_test_global,
+                                                     self.M_global[:, :, idx_group],
+                                                     self.Sigma_global[:, :, idx_group])
+            X_minibatch_BN = tc.zeros((Ns, self.T_local, self.N_local_model)).float().cuda(0)
+            for idx_local in range(self.N_local_model):
+                X_minibatch_BN[:, :, idx_local] = self.batchnormalize(self.X_test[:, :, idx_local],
+                                                                     self.M_local[idx_local, :, idx_group],
+                                                                     self.Sigma_local[idx_local, :, idx_group])
             s, h = self.decision_value(X_minibatch_BN, X_global_BN.permute(2, 1, 0), model_onegroup, Ns)
             s_mean = s_mean + s
         s_mean = s_mean / N_group
-        idx_1 = tc.where(tc.eq(label_test, 1))[0]
-        idx_2 = tc.where(tc.eq(label_test, 0))[0]
+        idx_1 = tc.where(tc.eq(self.label_test, 1))[0]
+        idx_2 = tc.where(tc.eq(self.label_test, 0))[0]
 
         y_predicted_final = s_mean.clone()
         y_predicted_final[s_mean >= 0.5] = 1
         y_predicted_final[s_mean < 0.5] = 0
 
-        acc = (y_predicted_final == label_test).sum() / y_predicted_final.shape[0]
+        acc = (y_predicted_final == self.label_test).sum() / y_predicted_final.shape[0]
 
-        n_positive = label_test.eq(1).sum()
-        n_negative = label_test.eq(0).sum()
-        n_tp = (y_predicted_final.T * label_test.T).sum()
-        n_fp = ((y_predicted_final.T == 1) * (label_test.T == 0)).sum()
+        n_positive = self.label_test.eq(1).sum()
+        n_negative = self.label_test.eq(0).sum()
+        n_tp = (y_predicted_final.T * self.label_test.T).sum()
+        n_fp = ((y_predicted_final.T == 1) * (self.label_test.T == 0)).sum()
 
         tpr = n_tp / n_positive
         fpr = n_fp / n_negative
-        fpr_1, tpr_1, thresholds = roc_curve(label_test.cpu().numpy(), s_mean.detach().cpu().numpy())
+        fpr_1, tpr_1, thresholds = roc_curve(self.label_test.cpu().numpy(), s_mean.detach().cpu().numpy())
         auc = metrics_auc(fpr_1, tpr_1)
         ba = (tpr + (1 - fpr)) / 2
 
         # for i in range(len(model_all)):
         #     for j in range(len(model_all[0])):
         #         model_all[i][j] = model_all[i][j].detach().cpu()
-
-        Tset_test = Tset_test.clone().detach().cpu()
-        NTset_test = NTset_test.clone().detach().cpu()
-        Tset_test_global = Tset_test_global.clone().detach().cpu()
-        NTset_test_global = NTset_test_global.clone().detach().cpu()
-        Sigma_global = Sigma_global.clone().detach().cpu()
-        M_global = M_global.clone().detach().cpu()
-        Sigma_local = Sigma_local.clone().detach().cpu()
-        M_local = M_local.clone().detach().cpu()
-        Model_order = Model_order.clone().detach().cpu()
-        X_test = X_test.clone().detach().cpu()
-        X_test_global = X_test_global.clone().detach().cpu()
-        X_minibatch_BN = X_minibatch_BN.clone().detach().cpu()
-        X_global_BN = X_global_BN.clone().detach().cpu()
-        label_test = label_test.clone().detach().cpu()
-        y_predicted_final = y_predicted_final.clone().detach().cpu()
-        s = s.clone().detach().cpu()
-        s_mean = s_mean.clone().detach().cpu()
+        if continue_test:
+            pass
+        else:
+            self.Tset_test = self.Tset_test.clone().detach().cpu()
+            self.NTset_test = self.NTset_test.clone().detach().cpu()
+            self.Tset_test_global = self.Tset_test_global.clone().detach().cpu()
+            self.NTset_test_global = self.NTset_test_global.clone().detach().cpu()
+            self.Sigma_global = self.Sigma_global.clone().detach().cpu()
+            self.M_global = self.M_global.clone().detach().cpu()
+            self.Sigma_local = self.Sigma_local.clone().detach().cpu()
+            self.M_local = self.M_local.clone().detach().cpu()
+            self.Model_order = self.Model_order.clone().detach().cpu()
+            self.X_test = self.X_test.clone().detach().cpu()
+            self.X_test_global = self.X_test_global.clone().detach().cpu()
+            X_minibatch_BN = X_minibatch_BN.clone().detach().cpu()
+            X_global_BN = X_global_BN.clone().detach().cpu()
+            self.label_test = self.label_test.clone().detach().cpu()
+            y_predicted_final = y_predicted_final.clone().detach().cpu()
+            s = s.clone().detach().cpu()
+            s_mean = s_mean.clone().detach().cpu()
         ba = ba.detach().cpu().numpy()
         acc = acc.detach().cpu().numpy()
         tpr = tpr.detach().cpu().numpy()
@@ -778,7 +792,7 @@ class XGBDIM():
             X_train_global_BN[idx_group] = X_train_global_BN[idx_group].clone().detach().cpu()
 
         tc.cuda.empty_cache()
-        filename = 'Model_' + str(self.sub_idx) + '_MG_' + str(self.N_multiple) + '.pt'
+        filename = 'Model_' + str(self.sub_idx) + '_MG_' + str(self.N_multiple_save) + '.pt'
         tc.save({'Model': model_all,
                  'M_global': self.M_global,
                  'Sigma_global': self.Sigma_global,
