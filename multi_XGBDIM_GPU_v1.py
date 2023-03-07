@@ -14,7 +14,7 @@ import random
 from sklearn.metrics import roc_curve
 from sklearn.metrics import auc as metrics_auc
 import matplotlib.pyplot as plt
-
+# tc.autograd.set_detect_anomaly(True)
 '''
 data_path: the path of the data
 sub_idx: the index of the subject
@@ -82,7 +82,7 @@ class loss_model_global(nn.Module):
         # return crossentropy loss
         # input x: (batch_size, 1)
         # input y: (batch_size, 1)
-        return tc.mean(-y * tc.log(x) - (1 - y) * tc.log(1 - x))
+        return tc.mean(-y * tc.log(x + 1e-6) - (1 - y) * tc.log(1 - x + 1e-6))
 
 class loss_model_local(nn.Module):
     def __init__(self, G_k, H_k):
@@ -481,7 +481,7 @@ class XGBDIM():
         self.gstf_weight = Model_load['GSTF_weight']
         return model_all, Sigma_global, M_global, Sigma_local, M_local, Model_order
 
-    def test(self, testset):
+    def test(self, testset, N_group):
         model_all, Sigma_global, M_global, Sigma_local, M_local, Model_order = self.load_model()
         Sigma_global, M_global, Sigma_local, M_local, Model_order = \
             Sigma_global.cuda(0), M_global.cuda(0), Sigma_local.cuda(0), M_local.cuda(0), Model_order.cuda(0)
@@ -498,7 +498,7 @@ class XGBDIM():
         Tset_test_global = tc.from_numpy(Tset_test_global).float().cuda(0)
         NTset_test_global = tc.from_numpy(NTset_test_global).float().cuda(0)
 
-        N_group = len(model_all)
+        N_group = np.min([N_group, len(model_all)])
         N_local_model = len(model_all[0]) - 1
         X_test = tc.cat((Tset_test, NTset_test), dim=0)
         X_test_global = tc.cat((Tset_test_global, NTset_test_global), dim=2)
@@ -685,6 +685,7 @@ class XGBDIM():
                             outputs, _ = model(data) #X_train_global_BN, idx_batch
                             loss = criterion(outputs.view(-1, 1), target.view(-1, 1)) \
                                    + self.eta_global * model.W_global.norm(2)**2 + self.eta_global * model.Q_global.norm(2)**2
+                            # with tc.autograd.detect_anomaly():
                             loss.backward()
                             optimizer_global.step()
                         print('Group', idx_group, ' -- Epoch: ', idx_epoch+1, '-- GSTF loss: ', loss.item())  #, end='\t'
@@ -728,6 +729,7 @@ class XGBDIM():
                             optimizer_local.zero_grad()
                             outputs_local = model(data)
                             loss_local = criterion(outputs_local, indices) + self.eta_local * model.w_local.norm(2)**2
+                            # with tc.autograd.detect_anomaly():
                             loss_local.backward()
                             optimizer_local.step()
                         # print('Epoch: ', idx_epoch+1, '-- Local loss: ', loss_local.item(), end='\t')

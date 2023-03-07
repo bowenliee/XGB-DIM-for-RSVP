@@ -81,7 +81,7 @@ class loss_model_global(nn.Module):
         # return crossentropy loss
         # input x: (batch_size, 1)
         # input y: (batch_size, 1)
-        return tc.mean(-y * tc.log(x) - (1 - y) * tc.log(1 - x))
+        return tc.mean(-y * tc.log(x + 1e-6) - (1 - y) * tc.log(1 - x + 1e-6))
 
 class loss_model_local(nn.Module):
     def __init__(self, G_k, H_k):
